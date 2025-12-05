@@ -34,7 +34,6 @@
             position: absolute;
             top: 0;
             left: 0;
-            transform: scaleX(-1); /* 镜像翻转，使画面更自然 */
         }
         
         #canvas {
@@ -109,51 +108,38 @@
             <div id="camera">摄像头: 等待启动</div>
         </div>
         <div id="controls">
-            <button id="startBtn">开始AR</button>
+            <button id="startBtn">点击启用传感器</button>
             <button id="resetBtn">重置视角</button>
         </div>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script>
-        // OBJLoader (简化版本)
+        // OBJLoader
         THREE.OBJLoader = function() {};
         
         THREE.OBJLoader.prototype.load = function(url, onLoad, onProgress, onError) {
-            const scope = this;
             const xhr = new XMLHttpRequest();
-            
             xhr.onload = function() {
                 if (xhr.status === 200 || xhr.status === 0) {
                     try {
-                        const object = scope.parse(xhr.responseText || xhr.response);
+                        const object = this.parse(xhr.responseText || xhr.response);
                         if (onLoad) onLoad(object);
                     } catch (e) {
-                        if (onError) {
-                            onError(e);
-                        } else {
-                            console.error('解析OBJ文件错误:', e);
-                        }
+                        if (onError) onError(e);
                     }
                 } else {
-                    if (onError) {
-                        onError(new Error('HTTP错误: ' + xhr.status));
-                    }
+                    if (onError) onError(new Error('HTTP错误: ' + xhr.status));
                 }
-            };
-            
+            }.bind(this);
             xhr.onerror = function() {
-                if (onError) {
-                    onError(new Error('加载OBJ文件失败'));
-                }
+                if (onError) onError(new Error('加载失败'));
             };
-            
             xhr.onprogress = function(event) {
                 if (onProgress && event.lengthComputable) {
                     onProgress(event);
                 }
             };
-            
             xhr.open('GET', url, true);
             xhr.send(null);
         };
@@ -164,32 +150,20 @@
             const normals = [];
             const uvs = [];
             const faces = [];
-            const object = new THREE.Group();
             
             for (let i = 0; i < lines.length; i++) {
                 const line = lines[i].trim();
-                if (line.length === 0 || line.charAt(0) === '#') continue;
+                if (!line || line.charAt(0) === '#') continue;
                 
                 const parts = line.split(/\s+/);
                 const type = parts[0];
                 
                 if (type === 'v') {
-                    vertices.push(
-                        parseFloat(parts[1]),
-                        parseFloat(parts[2]),
-                        parseFloat(parts[3])
-                    );
+                    vertices.push(parseFloat(parts[1]), parseFloat(parts[2]), parseFloat(parts[3]));
                 } else if (type === 'vn') {
-                    normals.push(
-                        parseFloat(parts[1]),
-                        parseFloat(parts[2]),
-                        parseFloat(parts[3])
-                    );
+                    normals.push(parseFloat(parts[1]), parseFloat(parts[2]), parseFloat(parts[3]));
                 } else if (type === 'vt') {
-                    uvs.push(
-                        parseFloat(parts[1]),
-                        parseFloat(parts[2])
-                    );
+                    uvs.push(parseFloat(parts[1]), parseFloat(parts[2]));
                 } else if (type === 'f') {
                     const faceIndices = [];
                     for (let j = 1; j < parts.length; j++) {
@@ -211,16 +185,12 @@
             for (let i = 0; i < faces.length; i++) {
                 const face = faces[i];
                 for (let j = 1; j < face.length - 1; j++) {
-                    const v0 = face[0];
-                    const v1 = face[j];
-                    const v2 = face[j + 1];
-                    
+                    const v0 = face[0], v1 = face[j], v2 = face[j + 1];
                     positions.push(
                         vertices[v0.v * 3], vertices[v0.v * 3 + 1], vertices[v0.v * 3 + 2],
                         vertices[v1.v * 3], vertices[v1.v * 3 + 1], vertices[v1.v * 3 + 2],
                         vertices[v2.v * 3], vertices[v2.v * 3 + 1], vertices[v2.v * 3 + 2]
                     );
-                    
                     if (v0.vn >= 0 && normals.length > 0) {
                         normalsArray.push(
                             normals[v0.vn * 3], normals[v0.vn * 3 + 1], normals[v0.vn * 3 + 2],
@@ -240,39 +210,43 @@
             
             const geometry = new THREE.BufferGeometry();
             geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-            
             if (normalsArray.length > 0) {
                 geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normalsArray, 3));
             } else {
                 geometry.computeVertexNormals();
             }
-            
             if (uvsArray.length > 0) {
                 geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvsArray, 2));
             }
             
             const material = new THREE.MeshPhongMaterial({ color: 0xffffff });
             const mesh = new THREE.Mesh(geometry, material);
+            const object = new THREE.Group();
             object.add(mesh);
-            
             return object;
         };
     </script>
 
     <script>
-        // 全局变量
-        let video, canvas, renderer, scene, camera, model;
-        let videoTexture;
-        let alpha = 0, beta = 0, gamma = 0;
+        let scene, camera, renderer, model, videoTexture;
+        let video, canvas;
         let isARActive = false;
-        let orientationPermissionGranted = false;
         
-        // 初始化
+        // 陀螺仪数据和平滑插值
+        let targetRotX = 0, targetRotY = 0, targetRotZ = 0;
+        let currentRotX = 0, currentRotY = 0, currentRotZ = 0;
+        const DAMPING = 0.15; // 平滑系数
+        
+        window.onload = function() {
+            init();
+            animate();
+        };
+        
         function init() {
             video = document.getElementById('video');
             canvas = document.getElementById('canvas');
             
-            // 创建Three.js场景
+            // 创建场景
             scene = new THREE.Scene();
             
             // 创建相机
@@ -301,13 +275,10 @@
             loadModel();
             
             // 事件监听
-            document.getElementById('startBtn').addEventListener('click', toggleAR);
+            document.getElementById('startBtn').addEventListener('click', enableSensors);
             document.getElementById('resetBtn').addEventListener('click', resetView);
             
             window.addEventListener('resize', onWindowResize);
-            
-            // 开始渲染循环
-            animate();
         }
         
         // 启动摄像头
@@ -330,11 +301,13 @@
                     video.play();
                     updateStatus('摄像头已启动', 'camera', 'success');
                     
+                    // 创建视频纹理
                     videoTexture = new THREE.VideoTexture(video);
                     videoTexture.minFilter = THREE.LinearFilter;
                     videoTexture.magFilter = THREE.LinearFilter;
                     videoTexture.flipY = true;
                     
+                    // 创建背景平面
                     const videoAspect = video.videoWidth / video.videoHeight;
                     const planeSize = 20;
                     const geometry = new THREE.PlaneGeometry(planeSize * videoAspect, planeSize);
@@ -353,80 +326,56 @@
             }
         }
         
-        // 请求陀螺仪权限并启动
-        async function requestOrientationPermission() {
-            // iOS 13+ 需要用户交互才能请求权限
-            if (typeof DeviceOrientationEvent !== 'undefined' && 
-                typeof DeviceOrientationEvent.requestPermission === 'function') {
-                try {
-                    const permission = await DeviceOrientationEvent.requestPermission();
-                    if (permission === 'granted') {
-                        orientationPermissionGranted = true;
-                        startOrientationListener();
-                        updateStatus('陀螺仪权限已授予', 'orientation', 'success');
-                        return true;
-                    } else {
-                        updateStatus('陀螺仪权限被拒绝', 'orientation', 'error');
-                        return false;
-                    }
-                } catch (error) {
-                    console.error('权限请求错误:', error);
-                    updateStatus('权限请求失败: ' + error.message, 'orientation', 'error');
-                    return false;
-                }
+        // 启用传感器（参考提供的代码）
+        function enableSensors() {
+            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                // iOS 13+
+                DeviceOrientationEvent.requestPermission()
+                    .then(response => {
+                        if (response === 'granted') {
+                            window.addEventListener('deviceorientation', handleOrientation, true);
+                            isARActive = true;
+                            document.getElementById('startBtn').textContent = '传感器已启用';
+                            updateStatus('传感器权限已授予', 'orientation', 'success');
+                        } else {
+                            updateStatus('传感器权限被拒绝', 'orientation', 'error');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('权限请求错误:', error);
+                        updateStatus('权限请求失败: ' + error.message, 'orientation', 'error');
+                    });
             } else {
-                // 非iOS 13+，直接启动
-                orientationPermissionGranted = true;
-                startOrientationListener();
-                return true;
+                // 非iOS 13+
+                window.addEventListener('deviceorientation', handleOrientation, true);
+                isARActive = true;
+                document.getElementById('startBtn').textContent = '传感器已启用';
+                updateStatus('传感器已启用', 'orientation', 'success');
             }
         }
         
-        // 启动方向监听
-        function startOrientationListener() {
-            // 移除旧的监听器（如果存在）
-            window.removeEventListener('deviceorientation', handleOrientation);
-            
-            // 添加新的监听器
-            window.addEventListener('deviceorientation', handleOrientation, true);
-            
-            updateStatus('正在监听陀螺仪数据...', 'orientation');
-        }
-        
-        // 处理设备方向事件
+        // 处理设备方向事件（参考提供的代码）
         function handleOrientation(event) {
-            // 检查数据是否有效
-            if (event.alpha === null || event.beta === null || event.gamma === null) {
-                updateStatus('陀螺仪数据无效', 'orientation', 'error');
-                return;
-            }
-            
-            alpha = event.alpha; // 0-360度
-            beta = event.beta;   // -180到180度
-            gamma = event.gamma; // -90到90度
+            const alpha = event.alpha || 0; // 0-360度
+            const beta = event.beta || 0;   // -180到180度
+            const gamma = event.gamma || 0; // -90到90度
             
             // 更新显示
-            updateOrientationInfo();
+            updateOrientationInfo(alpha, beta, gamma);
             
-            // 如果AR激活，更新相机旋转
-            if (isARActive && model) {
-                updateCameraRotation();
+            if (isARActive) {
+                // 将设备方向转换为相机旋转目标值
+                // 使用clamp限制旋转范围，避免过度旋转
+                const factorX = THREE.MathUtils.clamp(beta / 90, -1, 1);
+                const factorY = THREE.MathUtils.clamp(gamma / 90, -1, 1);
+                const factorZ = THREE.MathUtils.clamp((alpha - 180) / 180, -1, 1);
+                
+                // 设置目标旋转值（可以根据需要调整最大旋转角度）
+                const MAX_ROT = Math.PI / 3; // 60度最大旋转
+                targetRotX = factorX * MAX_ROT;
+                targetRotY = factorY * MAX_ROT;
+                targetRotZ = factorZ * MAX_ROT;
             }
-        }
-        
-        // 更新相机旋转
-        function updateCameraRotation() {
-            if (!isARActive) return;
-            
-            const alphaRad = THREE.MathUtils.degToRad(alpha);
-            const betaRad = THREE.MathUtils.degToRad(beta);
-            const gammaRad = THREE.MathUtils.degToRad(gamma);
-            
-            // 将设备方向映射到相机旋转
-            // 注意：可能需要根据实际效果调整这些映射
-            camera.rotation.x = betaRad;
-            camera.rotation.y = alphaRad;
-            camera.rotation.z = -gammaRad;
         }
         
         // 加载3D模型
@@ -439,19 +388,24 @@
                 function(object) {
                     model = object;
                     
+                    // 计算边界框
                     const box = new THREE.Box3().setFromObject(model);
                     const center = box.getCenter(new THREE.Vector3());
                     const size = box.getSize(new THREE.Vector3());
                     
+                    // 居中模型
                     model.position.sub(center);
                     
+                    // 缩放模型
                     const maxDim = Math.max(size.x, size.y, size.z);
                     const scale = 2 / maxDim;
                     model.scale.multiplyScalar(scale);
                     
+                    // 设置模型在世界空间中的固定位置
                     model.position.set(0, 0, -5);
                     model.rotation.set(0, 0, 0);
                     
+                    // 添加光照
                     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
                     scene.add(ambientLight);
                     
@@ -476,29 +430,15 @@
             );
         }
         
-        // 切换AR模式
-        async function toggleAR() {
-            if (!isARActive) {
-                // 请求陀螺仪权限
-                const granted = await requestOrientationPermission();
-                if (granted) {
-                    isARActive = true;
-                    document.getElementById('startBtn').textContent = '停止AR';
-                    updateStatus('AR模式已激活', 'status', 'success');
-                } else {
-                    updateStatus('需要陀螺仪权限才能使用AR', 'status', 'error');
-                }
-            } else {
-                isARActive = false;
-                document.getElementById('startBtn').textContent = '开始AR';
-                camera.rotation.set(0, 0, 0);
-                updateStatus('AR模式已停止', 'status');
-            }
-        }
-        
         // 重置视角
         function resetView() {
             camera.rotation.set(0, 0, 0);
+            targetRotX = 0;
+            targetRotY = 0;
+            targetRotZ = 0;
+            currentRotX = 0;
+            currentRotY = 0;
+            currentRotZ = 0;
             updateStatus('视角已重置', 'status', 'success');
         }
         
@@ -512,7 +452,7 @@
         }
         
         // 更新方向信息
-        function updateOrientationInfo() {
+        function updateOrientationInfo(alpha, beta, gamma) {
             const info = `α: ${alpha.toFixed(1)}° β: ${beta.toFixed(1)}° γ: ${gamma.toFixed(1)}°`;
             updateStatus(info, 'orientation', 'success');
         }
@@ -524,19 +464,30 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         }
         
-        // 动画循环
+        // 动画循环（使用平滑插值）
         function animate() {
             requestAnimationFrame(animate);
             
+            // 更新视频纹理
             if (videoTexture) {
                 videoTexture.needsUpdate = true;
             }
             
+            // 平滑插值相机旋转（参考提供的代码）
+            if (isARActive) {
+                currentRotX += (targetRotX - currentRotX) * DAMPING;
+                currentRotY += (targetRotY - currentRotY) * DAMPING;
+                currentRotZ += (targetRotZ - currentRotZ) * DAMPING;
+                
+                // 更新相机旋转
+                camera.rotation.x = currentRotX;
+                camera.rotation.y = currentRotY;
+                camera.rotation.z = currentRotZ;
+            }
+            
+            // 渲染场景
             renderer.render(scene, camera);
         }
-        
-        // 页面加载完成后初始化
-        window.addEventListener('load', init);
     </script>
 </body>
 </html>
