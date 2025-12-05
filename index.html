@@ -34,6 +34,7 @@
             position: absolute;
             top: 0;
             left: 0;
+            transform: scaleX(-1); /* 镜像翻转，使画面更自然 */
         }
         
         #canvas {
@@ -115,7 +116,7 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script>
-        // OBJLoader (简化版本，不依赖THREE.Loader)
+        // OBJLoader (简化版本)
         THREE.OBJLoader = function() {};
         
         THREE.OBJLoader.prototype.load = function(url, onLoad, onProgress, onError) {
@@ -203,74 +204,40 @@
                 }
             }
             
-            // 处理所有面
             const positions = [];
             const normalsArray = [];
             const uvsArray = [];
             
             for (let i = 0; i < faces.length; i++) {
                 const face = faces[i];
-                
-                // 三角化（假设是三角形或四边形）
                 for (let j = 1; j < face.length - 1; j++) {
                     const v0 = face[0];
                     const v1 = face[j];
                     const v2 = face[j + 1];
                     
-                    // 顶点1
                     positions.push(
-                        vertices[v0.v * 3],
-                        vertices[v0.v * 3 + 1],
-                        vertices[v0.v * 3 + 2]
+                        vertices[v0.v * 3], vertices[v0.v * 3 + 1], vertices[v0.v * 3 + 2],
+                        vertices[v1.v * 3], vertices[v1.v * 3 + 1], vertices[v1.v * 3 + 2],
+                        vertices[v2.v * 3], vertices[v2.v * 3 + 1], vertices[v2.v * 3 + 2]
                     );
+                    
                     if (v0.vn >= 0 && normals.length > 0) {
                         normalsArray.push(
-                            normals[v0.vn * 3],
-                            normals[v0.vn * 3 + 1],
-                            normals[v0.vn * 3 + 2]
+                            normals[v0.vn * 3], normals[v0.vn * 3 + 1], normals[v0.vn * 3 + 2],
+                            normals[v1.vn * 3], normals[v1.vn * 3 + 1], normals[v1.vn * 3 + 2],
+                            normals[v2.vn * 3], normals[v2.vn * 3 + 1], normals[v2.vn * 3 + 2]
                         );
                     }
                     if (v0.vt >= 0 && uvs.length > 0) {
-                        uvsArray.push(uvs[v0.vt * 2], uvs[v0.vt * 2 + 1]);
-                    }
-                    
-                    // 顶点2
-                    positions.push(
-                        vertices[v1.v * 3],
-                        vertices[v1.v * 3 + 1],
-                        vertices[v1.v * 3 + 2]
-                    );
-                    if (v1.vn >= 0 && normals.length > 0) {
-                        normalsArray.push(
-                            normals[v1.vn * 3],
-                            normals[v1.vn * 3 + 1],
-                            normals[v1.vn * 3 + 2]
+                        uvsArray.push(
+                            uvs[v0.vt * 2], uvs[v0.vt * 2 + 1],
+                            uvs[v1.vt * 2], uvs[v1.vt * 2 + 1],
+                            uvs[v2.vt * 2], uvs[v2.vt * 2 + 1]
                         );
-                    }
-                    if (v1.vt >= 0 && uvs.length > 0) {
-                        uvsArray.push(uvs[v1.vt * 2], uvs[v1.vt * 2 + 1]);
-                    }
-                    
-                    // 顶点3
-                    positions.push(
-                        vertices[v2.v * 3],
-                        vertices[v2.v * 3 + 1],
-                        vertices[v2.v * 3 + 2]
-                    );
-                    if (v2.vn >= 0 && normals.length > 0) {
-                        normalsArray.push(
-                            normals[v2.vn * 3],
-                            normals[v2.vn * 3 + 1],
-                            normals[v2.vn * 3 + 2]
-                        );
-                    }
-                    if (v2.vt >= 0 && uvs.length > 0) {
-                        uvsArray.push(uvs[v2.vt * 2], uvs[v2.vt * 2 + 1]);
                     }
                 }
             }
             
-            // 创建几何体
             const geometry = new THREE.BufferGeometry();
             geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
             
@@ -284,7 +251,6 @@
                 geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvsArray, 2));
             }
             
-            // 创建材质和网格
             const material = new THREE.MeshPhongMaterial({ color: 0xffffff });
             const mesh = new THREE.Mesh(geometry, material);
             object.add(mesh);
@@ -299,6 +265,7 @@
         let videoTexture;
         let alpha = 0, beta = 0, gamma = 0;
         let isARActive = false;
+        let orientationPermissionGranted = false;
         
         // 初始化
         function init() {
@@ -308,12 +275,12 @@
             // 创建Three.js场景
             scene = new THREE.Scene();
             
-            // 创建相机（透视相机）
+            // 创建相机
             camera = new THREE.PerspectiveCamera(
-                75, // 视野角度
-                window.innerWidth / window.innerHeight, // 宽高比
-                0.1, // 近裁剪面
-                1000 // 远裁剪面
+                75,
+                window.innerWidth / window.innerHeight,
+                0.1,
+                1000
             );
             camera.position.set(0, 0, 0);
             camera.rotation.set(0, 0, 0);
@@ -321,7 +288,7 @@
             // 创建渲染器
             renderer = new THREE.WebGLRenderer({
                 canvas: canvas,
-                alpha: true, // 透明背景
+                alpha: true,
                 antialias: true
             });
             renderer.setSize(window.innerWidth, window.innerHeight);
@@ -329,9 +296,6 @@
             
             // 启动摄像头
             startCamera();
-            
-            // 启动陀螺仪
-            startGyroscope();
             
             // 加载3D模型
             loadModel();
@@ -351,10 +315,9 @@
             try {
                 updateStatus('正在请求摄像头权限...', 'status');
                 
-                // 请求后置摄像头
                 const constraints = {
                     video: {
-                        facingMode: { ideal: 'environment' }, // 后置摄像头
+                        facingMode: { ideal: 'environment' },
                         width: { ideal: 1920 },
                         height: { ideal: 1080 }
                     }
@@ -367,25 +330,20 @@
                     video.play();
                     updateStatus('摄像头已启动', 'camera', 'success');
                     
-                    // 创建视频纹理
                     videoTexture = new THREE.VideoTexture(video);
                     videoTexture.minFilter = THREE.LinearFilter;
                     videoTexture.magFilter = THREE.LinearFilter;
-                    videoTexture.flipY = true; // 翻转Y轴以匹配Three.js坐标系
+                    videoTexture.flipY = true;
                     
-                    // 创建大的背景平面（作为AR世界的地面/背景）
-                    // 使用视频的宽高比
                     const videoAspect = video.videoWidth / video.videoHeight;
-                    const planeSize = 20; // 足够大的平面
+                    const planeSize = 20;
                     const geometry = new THREE.PlaneGeometry(planeSize * videoAspect, planeSize);
                     const material = new THREE.MeshBasicMaterial({
                         map: videoTexture,
                         side: THREE.DoubleSide
                     });
                     const backgroundPlane = new THREE.Mesh(geometry, material);
-                    // 将平面放在相机前方一定距离，作为背景
                     backgroundPlane.position.set(0, 0, -10);
-                    // 平面面向相机（不需要额外旋转，因为flipY已经处理了）
                     scene.add(backgroundPlane);
                 });
                 
@@ -395,58 +353,80 @@
             }
         }
         
-        // 启动陀螺仪
-        function startGyroscope() {
+        // 请求陀螺仪权限并启动
+        async function requestOrientationPermission() {
+            // iOS 13+ 需要用户交互才能请求权限
             if (typeof DeviceOrientationEvent !== 'undefined' && 
                 typeof DeviceOrientationEvent.requestPermission === 'function') {
-                // iOS 13+ 需要请求权限
-                updateStatus('需要陀螺仪权限，请点击开始AR按钮', 'status');
+                try {
+                    const permission = await DeviceOrientationEvent.requestPermission();
+                    if (permission === 'granted') {
+                        orientationPermissionGranted = true;
+                        startOrientationListener();
+                        updateStatus('陀螺仪权限已授予', 'orientation', 'success');
+                        return true;
+                    } else {
+                        updateStatus('陀螺仪权限被拒绝', 'orientation', 'error');
+                        return false;
+                    }
+                } catch (error) {
+                    console.error('权限请求错误:', error);
+                    updateStatus('权限请求失败: ' + error.message, 'orientation', 'error');
+                    return false;
+                }
             } else {
-                // 其他设备直接监听
-                window.addEventListener('deviceorientation', handleOrientation);
-                updateStatus('陀螺仪已启动', 'orientation', 'success');
+                // 非iOS 13+，直接启动
+                orientationPermissionGranted = true;
+                startOrientationListener();
+                return true;
             }
+        }
+        
+        // 启动方向监听
+        function startOrientationListener() {
+            // 移除旧的监听器（如果存在）
+            window.removeEventListener('deviceorientation', handleOrientation);
+            
+            // 添加新的监听器
+            window.addEventListener('deviceorientation', handleOrientation, true);
+            
+            updateStatus('正在监听陀螺仪数据...', 'orientation');
         }
         
         // 处理设备方向事件
         function handleOrientation(event) {
-            if (event.alpha !== null && event.beta !== null && event.gamma !== null) {
-                alpha = event.alpha; // 绕Z轴旋转（指南针方向）
-                beta = event.beta;   // 绕X轴旋转（前后倾斜）
-                gamma = event.gamma; // 绕Y轴旋转（左右倾斜）
-                
-                updateOrientationInfo();
-                
-                if (isARActive && model) {
-                    updateModelRotation();
-                }
+            // 检查数据是否有效
+            if (event.alpha === null || event.beta === null || event.gamma === null) {
+                updateStatus('陀螺仪数据无效', 'orientation', 'error');
+                return;
+            }
+            
+            alpha = event.alpha; // 0-360度
+            beta = event.beta;   // -180到180度
+            gamma = event.gamma; // -90到90度
+            
+            // 更新显示
+            updateOrientationInfo();
+            
+            // 如果AR激活，更新相机旋转
+            if (isARActive && model) {
+                updateCameraRotation();
             }
         }
         
-        // 更新相机旋转（而不是模型旋转）
-        function updateModelRotation() {
+        // 更新相机旋转
+        function updateCameraRotation() {
             if (!isARActive) return;
-            
-            // 将设备方向转换为Three.js旋转
-            // 注意：Three.js使用弧度，设备方向使用度数
-            // alpha: 绕Z轴旋转（指南针方向，0-360度）
-            // beta: 绕X轴旋转（前后倾斜，-180到180度）
-            // gamma: 绕Y轴旋转（左右倾斜，-90到90度）
             
             const alphaRad = THREE.MathUtils.degToRad(alpha);
             const betaRad = THREE.MathUtils.degToRad(beta);
             const gammaRad = THREE.MathUtils.degToRad(gamma);
             
-            // 使用欧拉角更新相机旋转
-            // Three.js默认使用'XYZ'顺序
-            // 将设备方向映射到相机旋转，使模型保持在世界空间中的固定位置
-            // 当手机移动时，相机视角改变，可以从不同角度查看模型
-            
-            // 注意：需要根据设备坐标系调整映射关系
-            // 对于手机竖屏模式：
-            camera.rotation.x = betaRad; // 前后倾斜
-            camera.rotation.y = alphaRad; // 左右旋转（指南针方向）
-            camera.rotation.z = -gammaRad; // 左右倾斜（取反以匹配方向）
+            // 将设备方向映射到相机旋转
+            // 注意：可能需要根据实际效果调整这些映射
+            camera.rotation.x = betaRad;
+            camera.rotation.y = alphaRad;
+            camera.rotation.z = -gammaRad;
         }
         
         // 加载3D模型
@@ -457,31 +437,21 @@
             loader.load(
                 './1.obj',
                 function(object) {
-                    // 模型加载成功
                     model = object;
                     
-                    // 计算模型边界框以居中
                     const box = new THREE.Box3().setFromObject(model);
                     const center = box.getCenter(new THREE.Vector3());
                     const size = box.getSize(new THREE.Vector3());
                     
-                    // 居中模型
                     model.position.sub(center);
                     
-                    // 缩放模型以适应视图
                     const maxDim = Math.max(size.x, size.y, size.z);
-                    const scale = 2 / maxDim; // 缩放到2个单位大小
+                    const scale = 2 / maxDim;
                     model.scale.multiplyScalar(scale);
                     
-                    // 设置模型在世界空间中的固定位置（在相机前方）
-                    // 模型固定在世界坐标系中，不会随手机移动而移动
-                    model.position.set(0, 0, -5); // 放在背景平面前方，相机前方5个单位
-                    model.rotation.set(0, 0, 0); // 模型保持固定朝向，不旋转
+                    model.position.set(0, 0, -5);
+                    model.rotation.set(0, 0, 0);
                     
-                    // 确保模型在世界空间中固定
-                    model.matrixAutoUpdate = true;
-                    
-                    // 添加光照
                     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
                     scene.add(ambientLight);
                     
@@ -494,7 +464,6 @@
                     updateStatus('3D模型加载成功', 'status', 'success');
                 },
                 function(progress) {
-                    // 加载进度
                     if (progress.total > 0) {
                         const percent = (progress.loaded / progress.total * 100).toFixed(1);
                         updateStatus(`加载中: ${percent}%`, 'status');
@@ -510,54 +479,27 @@
         // 切换AR模式
         async function toggleAR() {
             if (!isARActive) {
-                // 请求陀螺仪权限（iOS 13+）
-                if (typeof DeviceOrientationEvent !== 'undefined' && 
-                    typeof DeviceOrientationEvent.requestPermission === 'function') {
-                    try {
-                        const permission = await DeviceOrientationEvent.requestPermission();
-                        if (permission === 'granted') {
-                            window.addEventListener('deviceorientation', handleOrientation);
-                            updateStatus('陀螺仪权限已授予', 'orientation', 'success');
-                        } else {
-                            updateStatus('需要陀螺仪权限才能使用AR功能', 'status', 'error');
-                            return;
-                        }
-                    } catch (error) {
-                        console.error('权限请求错误:', error);
-                        updateStatus('权限请求失败', 'status', 'error');
-                        return;
-                    }
+                // 请求陀螺仪权限
+                const granted = await requestOrientationPermission();
+                if (granted) {
+                    isARActive = true;
+                    document.getElementById('startBtn').textContent = '停止AR';
+                    updateStatus('AR模式已激活', 'status', 'success');
+                } else {
+                    updateStatus('需要陀螺仪权限才能使用AR', 'status', 'error');
                 }
-                
-                isARActive = true;
-                document.getElementById('startBtn').textContent = '停止AR';
-                updateStatus('AR模式已激活', 'status', 'success');
             } else {
                 isARActive = false;
                 document.getElementById('startBtn').textContent = '开始AR';
+                camera.rotation.set(0, 0, 0);
                 updateStatus('AR模式已停止', 'status');
-                
-                // 重置模型旋转
-                if (model) {
-                    model.rotation.set(0, 0, 0);
-                }
             }
         }
         
         // 重置视角
         function resetView() {
-            // 重置相机旋转
             camera.rotation.set(0, 0, 0);
-            
-            // 重置模型位置（如果需要）
-            if (model) {
-                // 模型保持在世界空间中的固定位置
-                // 不需要重置模型位置，因为它应该固定在世界中
-            }
-            
-            // 重置陀螺仪数据（但实际值会继续更新）
-            // alpha, beta, gamma 会继续从设备获取，这里只是重置显示
-            updateStatus('视角已重置（模型位置保持不变）', 'status', 'success');
+            updateStatus('视角已重置', 'status', 'success');
         }
         
         // 更新状态信息
@@ -572,7 +514,7 @@
         // 更新方向信息
         function updateOrientationInfo() {
             const info = `α: ${alpha.toFixed(1)}° β: ${beta.toFixed(1)}° γ: ${gamma.toFixed(1)}°`;
-            updateStatus(info, 'orientation');
+            updateStatus(info, 'orientation', 'success');
         }
         
         // 窗口大小改变
@@ -586,12 +528,10 @@
         function animate() {
             requestAnimationFrame(animate);
             
-            // 更新视频纹理
             if (videoTexture) {
                 videoTexture.needsUpdate = true;
             }
             
-            // 渲染场景
             renderer.render(scene, camera);
         }
         
